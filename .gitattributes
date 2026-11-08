@@ -1,0 +1,11 @@
+# The two pose models are ~100 MB and ~55 MB (GitHub's limit per file is 100 MB): stored with Git LFS.
+*.onnx filter=lfs diff=lfs merge=lfs -text
+
+# Text files: normalise line endings in the repo.
+*.cpp       text
+*.h         text
+*.cs        text
+*.py        text
+*.md        text
+*.txt       text
+*.uproject  text
