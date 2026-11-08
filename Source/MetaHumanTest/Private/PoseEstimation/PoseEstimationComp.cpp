@@ -3,6 +3,9 @@
 #include "PoseFrameGrabber.h"
 #include "PoseInferenceThread.h"
 #include "PoseEstimation/CPP_UW_PoseOverlay.h"
+#include "PoseEstimation/CPP_UW_PoseDataPanel.h"
+#include "IHPC_UI/CPP_UW_IHPCTimeline.h"
+#include "UObject/UObjectIterator.h"
 #include "PoseEstimation/PoseSports2D.h"
 #include "Async/Async.h"
 #include "Engine/Engine.h"
@@ -117,6 +120,28 @@ namespace PoseEstimationCompPrivate
 			}
 		}));
 
+	FAutoConsoleCommandWithWorldAndArgs DataCommand(
+		TEXT("Pose.Data"),
+		TEXT("Open / close the Pose Data panel (graphs, angle values, recording). Pose.Data 1 / 0, or no argument to toggle."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			if (UPoseEstimationComp* Comp = FindPoseComp(World))
+			{
+				Comp->SetDataPanelOpen(ParseOnOff(Args, Comp->IsDataPanelOpen()));
+			}
+		}));
+
+	FAutoConsoleCommandWithWorldAndArgs RecordCommand(
+		TEXT("Pose.Record"),
+		TEXT("Start / stop a pose recording (like the timeline's Record button; saved in Saved/PoseEstimation/Recordings)."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			if (UPoseEstimationComp* Comp = FindPoseComp(World))
+			{
+				Comp->ToggleRecording();
+			}
+		}));
+
 	FAutoConsoleCommandWithWorldAndArgs TestImageCommand(
 		TEXT("Pose.TestImage"),
 		TEXT("Pose.TestImage <image> [out.json]: run the detector + pose model on an image file (no Play needed) and write the keypoints as JSON."),
@@ -167,6 +192,7 @@ UPoseEstimationComp::UPoseEstimationComp()
 	PrimaryComponentTick.bTickEvenWhenPaused = true;
 	PrimaryComponentTick.TickGroup = TG_PostUpdateWork;   // after animation: the frame we ask for shows this tick's pose
 	OverlayWidgetClass = UCPP_UW_PoseOverlay::StaticClass();
+	DataPanelWidgetClass = UCPP_UW_PoseDataPanel::StaticClass();
 }
 
 FString UPoseEstimationComp::ResolveModelPath(const FString& File)
@@ -184,8 +210,12 @@ void UPoseEstimationComp::BeginPlay()
 	// Hands-free test switches (see the header).
 	FParse::Value(FCommandLine::Get(), TEXT("PoseLogStats="), AutoLogStatsSeconds);
 	FParse::Value(FCommandLine::Get(), TEXT("PoseQuitAfter="), AutoQuitAfterSeconds);
+	FParse::Value(FCommandLine::Get(), TEXT("PoseRecordAfter="), AutoRecordAfterSeconds);
+	FParse::Value(FCommandLine::Get(), TEXT("PoseRecordFor="), AutoRecordForSeconds);
+	FParse::Value(FCommandLine::Get(), TEXT("PoseScreenshotEvery="), AutoScreenshotEverySeconds);
 	AutoStartTime = FPlatformTime::Seconds();
 	NextAutoLogTime = AutoStartTime + AutoLogStatsSeconds;
+	NextAutoScreenshotTime = AutoStartTime + AutoScreenshotEverySeconds;
 	const bool bAutoEnable = FParse::Param(FCommandLine::Get(), TEXT("PoseAutoEnable"));
 	if (bAutoEnable || AutoLogStatsSeconds > 0.f || AutoQuitAfterSeconds > 0.f)
 	{
@@ -197,11 +227,20 @@ void UPoseEstimationComp::BeginPlay()
 	{
 		SetEstimationEnabled(true);
 	}
+	if (FParse::Param(FCommandLine::Get(), TEXT("PoseDataPanel")))
+	{
+		SetDataPanelOpen(true);
+	}
 }
 
 void UPoseEstimationComp::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (bRecording)
+	{
+		StopRecording();   // Play stopped while recording: keep what was recorded
+	}
 	bEnabled = false;
+	bRunForRecording = false;
 	// Worker threads hold the models: let them finish before the world (and possibly the NNE runtime) goes away.
 	if (InferenceThread.IsValid())
 	{
@@ -223,6 +262,12 @@ void UPoseEstimationComp::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		OverlayWidget->RemoveFromParent();
 		OverlayWidget = nullptr;
 	}
+	if (DataPanelWidget)
+	{
+		DataPanelWidget->RemoveFromParent();
+		DataPanelWidget = nullptr;
+	}
+	bDataPanelOpen = false;
 	Estimator.Reset();
 	Super::EndPlay(EndPlayReason);
 }
@@ -235,8 +280,19 @@ void UPoseEstimationComp::SetEstimationEnabled(bool bEnable)
 	{
 		return;
 	}
+	const bool bWasRunning = IsRunning();
 	bEnabled = bEnable;
-	if (bEnabled)
+	OnRunningChanged(bWasRunning);
+	RefreshOverlay();
+}
+
+void UPoseEstimationComp::OnRunningChanged(bool bWasRunning)
+{
+	if (IsRunning() == bWasRunning)
+	{
+		return;
+	}
+	if (IsRunning())
 	{
 		bResetTracking = true;   // the previous boxes are stale: start with a detection
 		LastEnableTime = FPlatformTime::Seconds();
@@ -261,8 +317,42 @@ void UPoseEstimationComp::SetEstimationEnabled(bool bEnable)
 			Grabber->Cancel();
 		}
 		LatestResult = FPoseFrameResult();
+		LiveHistory.Reset();
 	}
-	RefreshOverlay();
+}
+
+void UPoseEstimationComp::SetDataPanelOpen(bool bOpen)
+{
+	if (bOpen == bDataPanelOpen)
+	{
+		return;
+	}
+	const bool bWasRunning = IsRunning();
+	bDataPanelOpen = bOpen;
+	OnRunningChanged(bWasRunning);
+
+	if (bOpen && !DataPanelWidget && DataPanelWidgetClass)
+	{
+		APlayerController* PC = Cast<APlayerController>(GetOwner());
+		if (!PC && GetWorld())
+		{
+			PC = GetWorld()->GetFirstPlayerController();
+		}
+		if (PC && PC->IsLocalController())
+		{
+			DataPanelWidget = CreateWidget<UCPP_UW_PoseDataPanel>(PC, DataPanelWidgetClass);
+			if (DataPanelWidget)
+			{
+				DataPanelWidget->SetPoseComponent(this);
+				DataPanelWidget->AddToViewport(DataPanelZOrder);
+			}
+		}
+	}
+	if (DataPanelWidget)
+	{
+		// The panel's full-screen canvas lets clicks through; only the panel itself is clickable.
+		DataPanelWidget->SetVisibility(bOpen ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	}
 }
 
 void UPoseEstimationComp::SetOverlayVisible(bool bVisible)
@@ -277,7 +367,7 @@ EPoseEstimationStatus UPoseEstimationComp::GetStatus() const
 	{
 		return EPoseEstimationStatus::Error;
 	}
-	if (!bEnabled)
+	if (!IsRunning())
 	{
 		return EPoseEstimationStatus::Off;
 	}
@@ -349,7 +439,7 @@ FString UPoseEstimationComp::GetStatsText() const
 void UPoseEstimationComp::DumpNextFrame()
 {
 	bDumpNextFrame = true;
-	if (!bEnabled)
+	if (!IsRunning())
 	{
 		UE_LOG(LogPoseEstimation, Display, TEXT("Pose.Dump: will save the next frame once estimation is on (Pose.Enable 1)."));
 	}
@@ -468,12 +558,31 @@ void UPoseEstimationComp::TickComponent(float DeltaTime, ELevelTick TickType, FA
 		NextAutoLogTime += AutoLogStatsSeconds;
 		UE_LOG(LogPoseEstimation, Display, TEXT("[auto %.0f s] %s"), FPlatformTime::Seconds() - AutoStartTime, *GetStatsText());
 	}
+	if (AutoRecordAfterSeconds > 0.f && AutoRecordForSeconds > 0.f && AutoRecordStep < 2)
+	{
+		const double Elapsed = FPlatformTime::Seconds() - AutoStartTime;
+		if ((AutoRecordStep == 0 && Elapsed >= AutoRecordAfterSeconds) || (AutoRecordStep == 1 && Elapsed >= AutoRecordAfterSeconds + AutoRecordForSeconds))
+		{
+			++AutoRecordStep;
+			UE_LOG(LogPoseEstimation, Display, TEXT("Pose estimation test: pressing Record (%s)."), AutoRecordStep == 1 ? TEXT("start") : TEXT("stop"));
+			ToggleRecording();
+		}
+	}
+	if (AutoScreenshotEverySeconds > 0.f && FPlatformTime::Seconds() >= NextAutoScreenshotTime)
+	{
+		NextAutoScreenshotTime += AutoScreenshotEverySeconds;
+		const FString Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("PoseEstimation") / TEXT("Screenshots")
+			/ FString::Printf(TEXT("auto_%02d.png"), ++AutoScreenshotCount));
+		FScreenshotRequest::RequestScreenshot(Path, /*bShowUI*/ true, /*bAddFilenameSuffix*/ false);
+		UE_LOG(LogPoseEstimation, Display, TEXT("Pose estimation test: screenshot %s"), *Path);
+	}
 	if (AutoQuitAfterSeconds > 0.f && FPlatformTime::Seconds() - AutoStartTime >= AutoQuitAfterSeconds)
 	{
 		AutoQuitAfterSeconds = 0.f;
 		UE_LOG(LogPoseEstimation, Display, TEXT("Pose estimation test: quitting after the requested time."));
 		FPlatformMisc::RequestExit(/*bForce*/ false, TEXT("PoseQuitAfter"));
 	}
+	FollowTimelineRecording();
 	if (!Grabber.IsValid())
 	{
 		return;
@@ -485,13 +594,13 @@ void UPoseEstimationComp::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	if (AnalysisOutput.IsValid() && InferenceThread.IsValid() && !InferenceThread->IsBusy())
 	{
 		TSharedPtr<FPoseAnalysisOutput, ESPMode::ThreadSafe> Output = MoveTemp(AnalysisOutput);
-		if (bEnabled)
+		if (IsRunning())
 		{
 			HandleAnalysisOutput(*Output);
 		}
 	}
 
-	if (!bEnabled || !Estimator.IsValid() || !InferenceThread.IsValid())
+	if (!IsRunning() || !Estimator.IsValid() || !InferenceThread.IsValid())
 	{
 		return;
 	}
@@ -681,6 +790,12 @@ void UPoseEstimationComp::HandleAnalysisOutput(FPoseAnalysisOutput& Output)
 	}
 
 	LatestResult = MoveTemp(Output.Result);
+	LiveHistory.AddFrame(LatestResult);
+	LiveHistory.TrimBefore(LatestResult.WorldTime - LiveHistorySeconds);
+	if (bRecording)
+	{
+		Recording.AddFrame(LatestResult);
+	}
 	const double Now = FPlatformTime::Seconds();
 	auto Ms = [](double From, double To) { return static_cast<float>(FMath::Max(0.0, To - From) * 1000.0); };
 	FPoseStatSample& Sample = RecentResults.AddDefaulted_GetRef();
@@ -716,6 +831,145 @@ void UPoseEstimationComp::SaveDump(const FPoseAnalysisOutput& Output) const
 		*Base, bImage ? TEXT("saved") : TEXT("FAILED"), bJson ? TEXT("saved") : TEXT("FAILED"));
 }
 
+// ---------------- Recording ----------------
+
+PoseSignal::FSettings UPoseEstimationComp::GetPostProcessingSettings() const
+{
+	PoseSignal::FSettings Settings;
+	Settings.bInterpolate = bInterpolate;
+	Settings.InterpolateGapSmallerThan = InterpolateGapSmallerThan;
+	Settings.MinChunkSize = MinChunkSize;
+	Settings.bRejectOutliers = bRejectOutliers;
+	Settings.bFilter = bFilter;
+	Settings.ButterworthOrder = ButterworthOrder;
+	Settings.ButterworthCutoffHz = ButterworthCutoffHz;
+	return Settings;
+}
+
+float UPoseEstimationComp::GetRecordingSeconds() const
+{
+	return bRecording ? static_cast<float>(FPlatformTime::Seconds() - RecordingStartTime) : 0.f;
+}
+
+void UPoseEstimationComp::ToggleRecording()
+{
+	if (bRecordWithTimeline)
+	{
+		if (UCPP_UW_IHPCTimeline* TimelineWidget = FindTimeline())
+		{
+			TimelineWidget->ToggleRecording();   // FollowTimelineRecording picks the change up
+			FollowTimelineRecording();
+			return;
+		}
+	}
+	if (bRecording)
+	{
+		StopRecording();
+	}
+	else
+	{
+		StartRecording();
+	}
+}
+
+void UPoseEstimationComp::StartRecording()
+{
+	if (bRecording)
+	{
+		return;
+	}
+	bRecording = true;
+	RecordingStartTime = FPlatformTime::Seconds();
+	RecordingName = FString::Printf(TEXT("Recording_%s"), *FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")));
+	Recording.Reset();
+	const bool bWasRunning = IsRunning();
+	bRunForRecording = true;   // estimation stays on until the recording stops; the overlay is unchanged
+	OnRunningChanged(bWasRunning);
+	UE_LOG(LogPoseEstimation, Display, TEXT("Pose recording started (%s)."), *RecordingName);
+}
+
+void UPoseEstimationComp::StopRecording()
+{
+	if (!bRecording)
+	{
+		return;
+	}
+	bRecording = false;
+	const double Seconds = FPlatformTime::Seconds() - RecordingStartTime;
+
+	FPoseProcessedRecording Processed;
+	if (Recording.Process(GetPostProcessingSettings(), Processed) && Processed.NumSamplesWithPerson > 0)
+	{
+		const FString Folder = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("PoseEstimation") / TEXT("Recordings") / RecordingName);
+		const TArray<FString> Files = FPoseRecording::Export(Processed, Folder, RecordingName);
+		LastRecording = MoveTemp(Processed);
+		bHasLastRecording = true;
+		LastRecordingFolder = Folder;
+		UE_LOG(LogPoseEstimation, Display, TEXT("Pose recording saved: %.1f s, %d analysed frames (%d with the person) -> %d steps at %.2f fps, Butterworth %.0f Hz. %d file(s) in %s"),
+			Seconds, LastRecording.NumSamples, LastRecording.NumSamplesWithPerson, LastRecording.Time.Num(), LastRecording.FrameRate, LastRecording.CutoffHz, Files.Num(), *Folder);
+		OnRecordingSaved.Broadcast(Folder);
+	}
+	else
+	{
+		UE_LOG(LogPoseEstimation, Display, TEXT("Pose recording stopped after %.1f s: %d analysed frame(s), nobody detected - nothing saved."), Seconds, Recording.Num());
+	}
+	Recording.Reset();
+
+	const bool bWasRunning = IsRunning();
+	bRunForRecording = false;
+	OnRunningChanged(bWasRunning);
+}
+
+UCPP_UW_IHPCTimeline* UPoseEstimationComp::FindTimeline()
+{
+	if (UCPP_UW_IHPCTimeline* Found = Timeline.Get())
+	{
+		return Found;
+	}
+	const double Now = FPlatformTime::Seconds();
+	if (Now < NextTimelineSearchTime)
+	{
+		return nullptr;
+	}
+	NextTimelineSearchTime = Now + 1.0;   // the HUD may not exist yet: look again in a second
+	for (TObjectIterator<UCPP_UW_IHPCTimeline> It; It; ++It)
+	{
+		if (It->GetWorld() == GetWorld() && !It->IsTemplate())
+		{
+			Timeline = *It;
+			bTimelineWasRecording = It->IsRecording();
+			return *It;
+		}
+	}
+	return nullptr;
+}
+
+void UPoseEstimationComp::FollowTimelineRecording()
+{
+	if (!bRecordWithTimeline)
+	{
+		return;
+	}
+	UCPP_UW_IHPCTimeline* TimelineWidget = FindTimeline();
+	if (!TimelineWidget)
+	{
+		return;
+	}
+	const bool bTimelineRecording = TimelineWidget->IsRecording();
+	if (bTimelineRecording != bTimelineWasRecording)
+	{
+		bTimelineWasRecording = bTimelineRecording;
+		if (bTimelineRecording)
+		{
+			StartRecording();
+		}
+		else
+		{
+			StopRecording();
+		}
+	}
+}
+
 // ---------------- Overlay ----------------
 
 void UPoseEstimationComp::EnsureOverlay()
@@ -749,7 +1003,7 @@ void UPoseEstimationComp::RefreshOverlay()
 	if (OverlayWidget)
 	{
 		OverlayWidget->SetVisibility(bShow ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-		if (!bEnabled)
+		if (!bShow)
 		{
 			OverlayWidget->ClearPose();
 		}

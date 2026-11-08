@@ -13,6 +13,10 @@ Sports2D gets from the same picture.
 of all angles on the left. The anatomy skeleton on the right is also detected as a person, but Sports2D's rules reject
 it, so nothing is drawn on it.*
 
+Phase 3 adds the **Pose Data** panel (angle values and graphs) and **recording**: press the timeline's Record button
+and the angles and keypoints are smoothed the way Sports2D does it and saved in Sports2D's file formats plus a
+spreadsheet ([pictures](#10-the-pose-data-panel-cpp_uw_posedatapanel)).
+
 - [Status](#status)
 - [Try it](#try-it)
 - [How it works](#how-it-works)
@@ -34,7 +38,7 @@ it, so nothing is drawn on it.*
 |---|---|---|
 | 1 | Models running in Unreal on the live view + basic dot overlay, checked against Sports2D | **Done** (2026-11-08) |
 | 2 | Sports2D-style overlay: skeleton lines, confidence colours, angle arcs on the joints, list of angle values; the 26 angles | **Done** (2026-11-08): drawing and angles match Sports2D; steady ~11 frames analysed per second |
-| 3 | Angles over time: filtering (Butterworth 6 Hz), data panel with graphs, export (CSV + Sports2D's `.trc` / `.mot`) | To do |
+| 3 | Angles over time: filtering (Butterworth 6 Hz), data panel with graphs, export (CSV + Sports2D's `.trc` / `.mot`) | **Built and tested** (2026-11-08): post-processing matches Sports2D / Pose2Sim; data panel and recording work in the standalone game. Waiting for a test in Play |
 | 4 | The two round buttons on the right (Pose Overlay, Pose Data) | To do |
 
 Decisions so far:
@@ -48,17 +52,25 @@ Decisions so far:
 
 ## Try it
 
-There are no buttons yet (phase 4). Use the console:
+There are no buttons yet (phase 4 adds them). Until then, use the console:
 
 1. Press **Play**, click in the game view and press **`** (the key left of 1) to open the console. The **Cmd** box at
    the bottom of the Output Log also works.
-2. `Pose.Enable 1`. The models load in the background (about 1–2 s the first time), then coloured dots appear on the
-   MetaHuman.
+2. `Pose.Enable 1`. The models load in the background (about 1–2 s the first time), then the Sports2D overlay appears
+   on the MetaHuman.
+3. `Pose.Data` opens the **Pose Data** panel on the right: the angle values, a graph of the last 10 seconds and the
+   Record button ([step 10](#10-the-pose-data-panel-cpp_uw_posedatapanel)). It also starts the analysis if it
+   was off; the overlay only shows if `Pose.Enable` is on.
+4. To **record**, press the timeline's red **Record** button (or **Record** in the panel, which presses the timeline's
+   button for you). Press it again to stop. The recording is processed like Sports2D does it, saved in
+   `Saved/PoseEstimation/Recordings/Recording_<date>_<time>/`, and the panel switches to **Last recording** to show it.
 
 | Command | Does |
 |---|---|
-| `Pose.Enable 1` / `0` (no number = toggle) | Start / stop analysing the view |
-| `Pose.Overlay 1` / `0` | Show / hide the dots (the analysis keeps running) |
+| `Pose.Enable 1` / `0` (no number = toggle) | Start / stop analysing the view and the overlay |
+| `Pose.Overlay 1` / `0` | Show / hide the drawing (the analysis keeps running) |
+| `Pose.Data 1` / `0` (no number = toggle) | Open / close the Pose Data panel |
+| `Pose.Record` | Start / stop a recording, same as the timeline's Record button |
 | `Pose.Stats` | Writes one line to the Output Log, averaged over the last 3 s: frames analysed per second and the game's fps, image size, time in each model, where the rest of the time goes (copying the frame, waiting, analysing), copy timeouts, people found, and for the main person: valid keypoints, mean score, the side facing the camera, number of angles |
 | `Pose.Dump` | Saves the next analysed frame in `Saved/PoseEstimation/`: the image (PNG), the keypoints (JSON), the people kept + angles (`.sports2d.json`) and a screenshot with the overlay (`_screen.png`). The first screenshot can freeze the game for a few seconds (Unreal compiles a few shaders for it) |
 | `Pose.TestImage <file.png> [out.json]` | Runs both models on an image file (Play not needed) and writes the keypoints as JSON |
@@ -71,11 +83,26 @@ quitting after 75 s, all written to `Saved/Logs/PoseAutoTest.log`:
 ```
 "C:/Program Files/Epic Games/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe" <project>/MetaHumanTest.uproject /Game/Main -game -windowed -PoseAutoEnable -PoseLogStats=5 -PoseQuitAfter=75 -log=PoseAutoTest.log
 ```
-The three `-Pose…` switches do nothing unless they're on the command line.
+More switches for testing phase 3 the same way:
+
+| Switch | Does |
+|---|---|
+| `-PoseDataPanel` | Open the Pose Data panel at start |
+| `-PoseRecordAfter=20 -PoseRecordFor=30` | Press Record 20 s after the start, and again 30 s later |
+| `-PoseScreenshotEvery=10` | A screenshot with the HUD every 10 s, in `Saved/PoseEstimation/Screenshots/auto_01.png`, … |
+
+For example, the run that made the two panel pictures below:
+```
+... MetaHumanTest.uproject /Game/Main -game -windowed -ResX=1650 -ResY=928 -PoseAutoEnable -PoseDataPanel -PoseRecordAfter=20 -PoseRecordFor=30 -PoseScreenshotEvery=20 -PoseLogStats=5 -PoseQuitAfter=75 -log=PoseAutoTest.log
+```
+None of the `-Pose…` switches do anything unless they're on the command line.
 
 From C++ or Blueprint: the player controller's **Pose Estimation** component (`GetPoseEstimation()`) has
-**Set Estimation Enabled**, **Set Overlay Visible**, **Get Latest Result**, **Get Stats Text** and the event
-**On Pose Estimated**, which fires after every analysed frame with all the keypoints.
+**Set Estimation Enabled**, **Set Overlay Visible**, **Set Data Panel Open**, **Toggle Recording** (what the panel's
+Record button calls), **Start / Stop Recording** (without touching the timeline), **Is Recording**, **Get Recording
+Seconds**, **Get Last Recording Folder**, **Get Latest Result**, **Get Stats Text**, and the events **On Pose
+Estimated** (after every analysed frame, with all the keypoints and angles) and **On Recording Saved** (with the
+folder). Phase 4's buttons only need *Set Estimation Enabled* and *Set Data Panel Open*.
 
 ---
 
@@ -187,6 +214,94 @@ except the text: Sports2D's default *fontSize* 0.3 was hard to read on screen, s
 bigger; the list spacing grows with it). *Font Size* and *Size Scale* on the overlay change this.
 Sports2D puts the list in the image's top-left corner; here it starts below the HUD title bar (*List Position*).
 
+### 8. Recording: `PoseRecording`
+While a recording runs, every analysed frame adds one *sample* for the main person: the time, their 26 keypoints
+(image pixels) and their 26 angles (missing ones left empty). If nobody passes Sports2D's rules on a frame, the sample is
+empty. The analysis keeps running for the whole recording, even with the overlay and the panel off.
+
+**Starting and stopping.** The recording follows the timeline's **Record** button (setting *Record With Timeline*), so
+the video recording and the pose data always cover the same time. The panel's Record button and `Pose.Record` press the
+timeline's button. Without a timeline (or with the setting off), they record on their own.
+
+**From live frames to "video frames".** Sports2D works on a video: frames at a fixed rate. Live analysis gives ~11
+frames a second, but not exactly evenly spaced (one every 80–100 ms). So when the recording stops:
+1. The *frame rate* is the samples' average rate: (number of samples − 1) / duration.
+2. An even time grid at that rate is laid from the first to the last sample. It has as many steps as there are
+   samples. Each step takes the **nearest** sample, so every analysed frame is used once, moved by less than half a
+   step (< ~45 ms) in time.
+3. From then on, each angle and each keypoint coordinate goes through Sports2D's post-processing (step 9) exactly as if
+   it came from a video at that frame rate.
+
+Why the nearest sample and not a straight line between neighbours? A straight line needs both neighbours. When a
+keypoint flickers in and out (often the knee on the far side), almost every value would be lost. The first try did
+this and lost most of the knee values.
+
+**What is saved**, in `Saved/PoseEstimation/Recordings/Recording_<yyyyMMdd_HHmmss>/` (Sports2D's file names, *person00*
+= the main person):
+
+| File | What | Opens in |
+|---|---|---|
+| `…_Sports2D_angles_person00.mot` | The post-processed angles, one column per angle that was seen at least once; degrees | OpenSim, any text editor; Sports2D's own format, so its plotting tools read it |
+| `…_Sports2D_px_person00.trc` | The post-processed keypoints: 22 markers in Sports2D's order (no eyes or ears), in image pixels (x right, y down). Sports2D's `_px.trc` format; like Sports2D, the header says "m" even though the values are pixels | OpenSim, Mokka, any text editor |
+| `…_angles.csv` | Time, then each of the 26 angles twice: post-processed, and *(raw)* = before the post-processing (on the even grid, unwrapped) | Excel, Google Sheets, Python |
+
+Empty cells mean "no value" (the angle couldn't be measured there, and the gap was too long to fill).
+
+### 9. Sports2D's post-processing: `PoseSignal`
+Ported from Sports2D's `process.py` and Pose2Sim's `common.py` / `filtering.py`, with Sports2D's default settings.
+It runs on each angle and each keypoint coordinate separately, in this order:
+
+| Step | What it does | Sports2D / Pose2Sim function |
+|---|---|---|
+| 0. Unwrap (angles only) | Removes jumps of 180° or 360° where a value crosses ±180°, then moves the whole curve by a multiple of 360° so its average is between −180° and 180° | `np.unwrap(period=180)` in `process.py` |
+| 1. Fill short gaps | Gaps of up to **100 frames** are filled with a straight line. Nothing is added before the first or after the last value. (Zeros also count as gaps, as in Pose2Sim.) | `interpolate_zeros_nans` |
+| 2. Trim and fill long gaps | Keeps the data from the first to the last run of at least **10** valid frames. Longer gaps inside are filled with the last value before the gap | `indices_of_first_last_non_nan_chunks`, `fill_large_gaps_with = 'last_value'` |
+| 3. Outliers | Each value further than 2 *sigma* from the median of its window is replaced by that median (*Hampel filter*). Window: **7 frames** for angles; for keypoints 7 × frame rate / 30 (3 frames at 11 frames/s) | `hampel_filter` |
+| 4. Smoothing | Zero-phase **Butterworth** low-pass, 4th order, **6 Hz** (run forwards and backwards so the curve isn't delayed) | `butterworth_filter_1d` (scipy `butter` + `filtfilt`) |
+
+**The cut-off at ~11 frames/s.** A 6 Hz filter needs more than 12 frames a second. Sports2D has a rule for this when it
+analyses a webcam: if the cut-off isn't below half the frame rate, it uses half the frame rate instead (frame rate / 2.001).
+Then Pose2Sim rounds it down to whole Hz. At 11 frames/s that gives **5 Hz**, which the panel and the log show. At 12
+frames/s or more it's 6 Hz again.
+
+Everything is computed in double precision with the same formulas as numpy, scipy and pandas (including small quirks,
+such as the filter's start-up values and pandas' slices that include their last element), so the results match the
+Python code to within 0.0001° (see the [tests](#how-we-know-it-matches-sports2d)).
+
+### 10. The Pose Data panel: `CPP_UW_PoseDataPanel`
+
+![The Pose Data panel, live, during a recording](images/pose_04_data_panel_live.png)
+*Live, while recording (top line: RECORDING 0:21). The graph shows the last 10 s of the right knee (green), left knee
+(blue) and trunk (orange), raw, as on the overlay. The MetaHuman faces left, so the camera sees its right side: the
+right knee bends and straightens with each step, while the left knee (the far-side leg) is mostly hidden and only shows
+up now and then, as separate ticks.*
+
+![The Pose Data panel showing the last recording](images/pose_05_data_panel_recording.png)
+*After the recording: the same three angles over the whole 30 s, after Sports2D's post-processing. The right knee
+(green) shows the steps. The left knee (blue) is the hidden leg: its few values are unreliable, gaps were filled, and
+the unwrapping lifted some above 180° ([things to know](#things-to-know)). (This picture was taken before a small fix:
+its caption says 6 Hz, but 5 Hz was used at 11 frames/s; the caption now says so.)*
+
+The panel is docked on the right, in the HUD's style (the dark rounded background of the other panels, Avenir fonts),
+so the MetaHuman and the overlay stay visible. It is drawn in C++, like the overlay, so it needs no Widget Blueprint.
+Clicks outside the panel go through to the scene as before. From top to bottom:
+* **Title** and **×** (close).
+* **Status line:** frames analysed per second, which way the person faces, valid keypoints, angles measured, and
+  *RECORDING m:ss* while recording.
+* **Live / Last recording.** *Live*: the last 10 s, raw values exactly as on the overlay, at the times they were
+  analysed; gaps where there was no value; a value alone between gaps is drawn as a short tick. *Last recording*: the
+  whole last recording, post-processed (solid lines) over the raw values (faint), like Sports2D's angle plots. The panel
+  switches to it on its own when a recording has been saved.
+* **The graph**, in degrees over seconds.
+* **The 26 angles**, as *joint* and *segment* angles, with their current value ("-" when not measured). Click a row
+  to put that angle on the graph or take it off (up to 4 at once, each with its own colour). Right knee, left knee and
+  trunk are shown at first. *Right / left wrist* never have a value: the 26-keypoint model has no finger point (see
+  [step 6](#6-angles-posesports2d)).
+* **Record / Stop** (presses the timeline's Record), **Open folder** (opens the last recording's folder in Explorer, or
+  the Recordings folder if there is none yet), and where the last recording was saved.
+
+Opening the panel starts the analysis (closing it stops it again, unless the overlay is on or a recording is running).
+
 ---
 
 ## The files
@@ -200,9 +315,12 @@ All new code is in `Source/MetaHumanTest/Public/PoseEstimation/` (headers) and `
 | `PoseInferenceThread.h/.cpp` (Private) | A dedicated thread that runs one analysis at a time, so the models never queue behind other editor work. |
 | `PoseEstimator.h/.cpp` | **The core.** Loads the two `.onnx` models into Unreal's Neural Network Engine (ONNX Runtime, CPU) and runs them, with RTMLib's preparation and decoding ported line by line: `Detect`, `EstimatePose`, `ProcessFrame` (the every-4th-frame logic), `ResizeLinear` / `WarpAffineLinear` (copies of OpenCV's image resizing), plus PNG/JSON helpers for tests. Not tied to the game, so tests can run it on image files. |
 | `PoseFrameGrabber.h/.cpp` (Private) | Copies the on-screen image from the GPU without stalling the game ([step 1](#1-getting-the-picture-poseframegrabber)). Converts it to the 8-bit BGR image the models expect, whatever pixel format the screen uses. |
-| `PoseEstimationComp.h/.cpp` | `UPoseEstimationComp`, on the player controller. Loads the models in the background the first time, runs the capture → analyse → publish loop (timing the next copy), owns the overlay, fires `OnPoseEstimated`, keeps the timing statistics. The `Pose.*` console commands live here too. |
+| `PoseEstimationComp.h/.cpp` | `UPoseEstimationComp`, on the player controller. Loads the models in the background the first time, runs the capture → analyse → publish loop (timing the next copy), owns the overlay and the data panel, records (following the timeline's Record button) and saves recordings, keeps the live history for the panel's graph, fires `OnPoseEstimated` / `OnRecordingSaved`, keeps the timing statistics. The `Pose.*` console commands and the hands-free test switches live here too. |
 | `CPP_UW_PoseOverlay.h/.cpp` | The Sports2D-style drawing ([step 7](#7-the-overlay-cpp_uw_poseoverlay)). |
-| `PoseEstimationCommandlet.h/.cpp` | Runs the models on image files from the command line, without opening the editor, and writes the keypoints plus the people kept and their angles. Used to compare with Sports2D ([below](#how-we-know-it-matches-sports2d)). |
+| `PoseRecording.h/.cpp` | A recording: the samples, the even time grid, and writing the `.mot`, `.trc` and `.csv` files ([step 8](#8-recording-poserecording)). |
+| `PoseSignal.h/.cpp` | Sports2D's post-processing ([step 9](#9-sports2ds-post-processing-posesignal)): unwrapping, gap filling, Hampel filter, and the Butterworth filter (including scipy's `butter` and `filtfilt`, rewritten in C++). Plain functions, no Unreal objects. |
+| `CPP_UW_PoseDataPanel.h/.cpp` | The Pose Data panel ([step 10](#10-the-pose-data-panel-cpp_uw_posedatapanel)): the panel, the graph (`UCPP_UW_PoseAngleGraph`) and the clickable angle rows (`UCPP_UW_PoseAngleRow`). |
+| `PoseEstimationCommandlet.h/.cpp` | Command-line tests, without opening the editor: runs the models on image files and writes the keypoints plus the people kept and their angles (`-Images=`), optionally as a recording with its Sports2D files (`-RecordFps=`); and runs columns of a CSV through the post-processing (`-SignalCsv=`). Used to compare with Sports2D ([below](#how-we-know-it-matches-sports2d)). |
 
 Other new files:
 
@@ -210,6 +328,8 @@ Other new files:
 |---|---|
 | `PoseModels/*.onnx` | The two models, exactly the files RTMLib downloads (about 150 MB). `PoseModels/README.md` lists where they come from, their checksums and their licences. |
 | `Tools/PoseEstimation/parity_check.py` | Runs real RTMLib on the same images and compares its output with Unreal's. |
+| `Tools/PoseEstimation/sports2d_reference.py` | Runs Sports2D's own drawing and angle functions on Unreal's keypoints (phase 2 checks). |
+| `Tools/PoseEstimation/postprocessing_check.py` | Runs Sports2D's / Pose2Sim's own post-processing functions on the same data as Unreal and compares (phase 3 checks). |
 
 ---
 
@@ -229,6 +349,14 @@ Select **PoseEstimation** in `BP_PlayerController`'s Components panel:
 | Copy Next Frame During Analysis | on | Copy the next frame while the models work (timed to arrive as they finish): more frames per second |
 | Enable On Begin Play | off | Start analysing as soon as Play starts |
 | Overlay Widget Class / Overlay Z Order | `CPP_UW_PoseOverlay` / 5 | The overlay and where it sits between the 3D view and the HUD |
+| Data Panel Widget Class / Data Panel Z Order | `CPP_UW_PoseDataPanel` / 11 | The data panel; 11 = above the HUD (10), below the muscle popup (20) |
+| Record With Timeline | on | Recordings start and stop with the timeline's Record button; the panel's Record presses it |
+| Live History Seconds | 10 | How much the panel's live graph shows |
+| **Sports2D post-processing** (recordings only) | | |
+| Interpolate / Interpolate Gap Smaller Than | on / 100 | Fill gaps up to this many frames with straight lines |
+| Min Chunk Size | 10 | Keep data from the first to the last run of at least this many valid frames; fill longer gaps with the last value |
+| Reject Outliers | on | Hampel filter |
+| Filter / Butterworth Order / Butterworth Cutoff Hz | on / 4 / 6 | The smoothing. The cut-off is lowered to just under half the frame rate when frames come slower than twice the cut-off (5 Hz at 11 frames/s) |
 
 The overlay's own settings are on `CPP_UW_PoseOverlay`. To change them, make a Widget Blueprint child of it and set it
 as *Overlay Widget Class*:
@@ -241,6 +369,17 @@ as *Overlay Widget Class*:
 | Size Scale | 1 | Multiplies every size (lines, dots, arcs, text, list) |
 | List Position | (10, 112) | Top-left of the angle list, in screen units (below the HUD title bar) |
 | Show Model Box / Show Rejected People | off | Debug: the box the pose model looked at; faded keypoints of rejected people |
+
+The data panel's settings are on `CPP_UW_PoseDataPanel` (same way: a Widget Blueprint child, set as *Data Panel Widget
+Class*):
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Panel Width | 560 | Width in screen units |
+| Panel Margins | top 112, right 96, bottom 130 | Distance from the screen edges: below the title bar, room on the right for phase 4's buttons, above the timeline |
+| Default Angles | right knee, left knee, trunk | Angles on the graph when the panel opens (Sports2D's names) |
+| Line Colors | green, blue, orange, pink | Graph colours in order of selection; their number = how many angles at once |
+| Refresh Interval | 0.1 s | How often the numbers and the live graph are updated |
 
 ---
 
@@ -256,6 +395,23 @@ images**, then compares every keypoint.
 | A live frame from Play-In-Editor (`Pose.Dump`) | **All 52 keypoints identical** |
 | **Angles** (phase 2): Sports2D's own angle functions on the keypoints Unreal found, vs. Unreal's `PoseSports2D` | Two live frames: 16/16 and 24/24 angles identical. 40-frame demo video: **1,656 angle values identical** (largest difference 0.00006°, rounding), same people kept, same facing side on every frame |
 | **Drawing** (phase 2) | Side by side with Sports2D's drawing of the same frame (picture in [step 7](#7-the-overlay-cpp_uw_poseoverlay)): same elements, colours and values |
+| **Post-processing** (phase 3): synthetic test signals with noise, short and long gaps, zeros, outlier spikes, short fragments and angles crossing ±180°, at 30 and 11.3 frames/s, as coordinates and as angles | Same as Pose2Sim's own functions to within **0.000001**, and missing in exactly the same places |
+| **A recording** (phase 3): the 40 demo-video frames as a 10 frames/s recording (`-RecordFps=10`); Sports2D's chain re-run on the raw columns of the CSV | **956 values**, largest difference 0.000003° |
+| **A live recording** (phase 3): 30 s recorded in the standalone game (11.3 frames/s, cut-off 5 Hz) | **7,170 values**, largest difference 0.00007° (the CSV is written with 6 decimals); missing in the same places |
+
+Phase 3's check uses Sports2D's and Pose2Sim's **own** code (pulled out of their source files), not a rewrite, with
+numpy, scipy and pandas:
+```
+python -I Tools/PoseEstimation/postprocessing_check.py make signals.csv 30
+"…/UnrealEditor-Cmd.exe" <project>/MetaHumanTest.uproject -run=PoseEstimation -SignalCsv=signals.csv -Out=unreal.csv -Fps=30 [-Angles] -unattended -nullrhi -nosplash
+python -I Tools/PoseEstimation/postprocessing_check.py ref <folder with a pose2sim clone> signals.csv reference.csv 30 [angles]
+python -I Tools/PoseEstimation/postprocessing_check.py compare reference.csv unreal.csv
+```
+For a recording made in the game:
+`python -I Tools/PoseEstimation/postprocessing_check.py recording <folder with a pose2sim clone> <Name>_angles.csv <Name>_Sports2D_px_person00.trc`.
+
+What this does **not** check: how the uneven live frames are put on an even grid ([step 8](#8-recording-poserecording)).
+Sports2D has no such step (a video's frames are already even), so there is nothing to compare it with.
 
 Where the tiny differences come from: OpenCV 5 cuts out the person with a float calculation that can't be matched bit for bit. On
 a few pixels the crop differs by 1 grey level, and once in a while that moves a keypoint by one SimCC step (half a
@@ -301,8 +457,12 @@ How it got there:
 Other notes:
 * With the editor window **in the background**, Unreal deliberately slows itself down, and so does the analysis.
 * Packaged builds would run the models on 1 CPU thread by default. `Config/DefaultEngine.ini` raises that to 4.
-* Phase 3's angle filtering (Butterworth 6 Hz) needs at least ~12 samples per second. ~11 is close; if needed, Sports2D's
-  "lightweight" models or the GPU option will lift it.
+* Phase 3's angle filtering (Butterworth 6 Hz) needs more than 12 frames per second. At ~11 the cut-off drops to 5 Hz
+  (Sports2D's own rule, [step 9](#9-sports2ds-post-processing-posesignal)). For walking and most training movements
+  that is still plenty. For fast movements (sprinting, jumps, throws), Sports2D's "lightweight" models or the GPU option
+  would give more frames per second.
+* Recording and the data panel cost almost nothing: a few numbers per frame, and the post-processing of a 30 s recording
+  takes a few milliseconds when Record is pressed again.
 
 ---
 
@@ -334,6 +494,29 @@ Other notes:
   until the popup closes. It's an editor effect: the standalone / packaged game isn't affected. For speed numbers use
   the [hands-free test](#try-it), or type the command in the in-game console (**`** key).
 
+Phase 3:
+* **Live recordings are not exactly a video.** Sports2D assumes evenly spaced frames. Live frames are put on an even
+  grid first ([step 8](#8-recording-poserecording)), which moves each one by less than half a frame (< ~45 ms). This
+  is the only part of phase 3 that isn't in Sports2D. Everything after it is Sports2D's chain, checked value by value.
+* **Angles above 180° or below −180°.** Sports2D *unwraps* angles so a curve doesn't jump from 179° to −179°. The side
+  effect: when a keypoint is badly placed for a moment (often a knee or foot on the far side), the curve can jump by
+  180° or 360° and then stay shifted. Sports2D does exactly the same. The *(raw)* columns of the CSV show what was
+  measured before.
+* **The far-side leg.** With the MetaHuman side-on, the leg further from the camera is partly hidden, so its keypoints
+  are often below Sports2D's 0.3 score and its angles come and go (the blue line in the
+  [panel pictures](#10-the-pose-data-panel-cpp_uw_posedatapanel)). Its values are less reliable; for knee or hip angles,
+  the leg facing the camera is the one to trust. Gaps up to 100 frames (~9 s at 11 frames/s) are filled
+  in the recording; the live view shows them as gaps.
+* **Not ported yet** (Sports2D options that need extra information):
+  * **Metres** (Sports2D's `_m.trc`, from the person's height and the floor). The keypoints are saved in pixels only.
+    The angles don't need it: they are the same in pixels and metres.
+  * **Floor tilt correction** of segment angles. Sports2D can measure the floor's angle in the picture and correct segment
+    angles for it (when it converts to metres). Here the floor is level in the picture, so this would change little.
+  * **Choosing the person** some other way (Sports2D can, for example, let you click on them, or pick the one who
+    moves most). Here the main person is always the highest-scoring one, which is the MetaHuman.
+* **Recording without the editor's timeline.** Recordings follow the timeline's Record button. If the HUD has no timeline
+  (another level), the panel's Record and `Pose.Record` record on their own.
+
 ---
 
 ## Changes outside the new folder
@@ -349,7 +532,8 @@ Other notes:
 
 **Perforce:** these files were edited without being checked out first (they were made writable). Check them out or use
 *Reconcile Offline Work* in P4V, and add the new files (`PoseEstimation/` source, `PoseModels/`,
-`Tools/PoseEstimation/`, this page and its image).
+`Tools/PoseEstimation/`, this page and its images). Phase 3 changed no shared files: everything is in the
+`PoseEstimation/` folders, `Tools/PoseEstimation/` and this page.
 
 ---
 
@@ -370,6 +554,9 @@ Other notes:
 | 2026-11-08 | First Play test of the fix still showed 0 frames/s at times, while each frame's own timings were fine. Added a watchdog (logs what every stage is doing when results stop) and a hands-free test mode (`-PoseAutoEnable -PoseLogStats -PoseQuitAfter`). Found the standalone game opened the wrong level (missing `GameDefaultMap`); fixed. Hands-free test on `Main`, 75 s: **steady 10.7–12 frames/s, no stalls, no copy timeouts**, latency ~120 ms, game 113–120 fps. |
 | 2026-11-08 | Play test: dots on the MetaHuman, slightly behind but close. The watchdog explained the remaining "0 frames/s": typing `Pose.Stats` in the Output Log's Cmd box opens an autocomplete popup, and the editor pauses the Play world while a popup is open (`FSlateThrottleManager`), so nothing was stalled in our code. **Phase 2 done.** |
 | 2026-11-08 | Angle text a third bigger (overlay *Font Size* 0.3 → 0.4) after the Play test. Public GitHub repo [MetaHumanTest-PoseEstimation](https://github.com/mblumpkin/MetaHumanTest-PoseEstimation) created with the pose estimation code, models (Git LFS), tools, licences and docs. |
+| 2026-11-08 | Phase 3 started. Read Sports2D's post-processing (`process.py`) and Pose2Sim's functions it calls. Ported them (`PoseSignal`), including scipy's Butterworth design and `filtfilt`. Synthetic test signals at 30 and 11.3 frames/s, as coordinates and as angles: same as Pose2Sim's own functions to within 0.000001. |
+| 2026-11-08 | Recording (`PoseRecording`) with Sports2D's `.mot` / `.trc` files plus a CSV, following the timeline's Record button; the Pose Data panel (`CPP_UW_PoseDataPanel`) with live and recorded graphs; `Pose.Data`, `Pose.Record`; hands-free switches for the panel, recording and screenshots. The 40 demo frames as a recording: 956 values match Sports2D's chain. |
+| 2026-11-08 | Hands-free test in the standalone game with a 30 s recording. Two fixes: (1) putting live frames on the even grid by straight lines lost most knee values next to gaps; now each step takes the nearest frame. (2) One shank angle came out 360° off from Sports2D because it was unwrapped before being put on the grid; now the grid comes first. Also: the panel's caption showed 6 Hz while 5 Hz was used. After the fixes, the live recording's 7,170 values match Sports2D's chain (largest difference 0.00007°). **Phase 3 built**; waiting for a test in Play. |
 
 ---
 

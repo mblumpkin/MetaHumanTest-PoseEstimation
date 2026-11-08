@@ -8,14 +8,20 @@
 //
 // The models load in the background the first time it is enabled (a second or two).
 //
+// Recording (phase 3): follows the timeline's Record button. While recording, the main person's keypoints and angles
+// are kept; on Stop they go through Sports2D's post-processing (PoseSignal) and are saved as Sports2D's .mot / .trc files
+// and a .csv in Saved/PoseEstimation/Recordings/<name>/ (FPoseRecording). Estimation is switched on for the recording
+// if it was off (without the overlay), so every recording has pose data.
+//
 // Console (also in the editor's Cmd box during Play):  Pose.Enable [0|1]   Pose.Overlay [0|1]   Pose.Stats
-//                                                      Pose.Dump   Pose.TestImage <png> [out.json]
+//                                                      Pose.Data [0|1]   Pose.Dump   Pose.Record   Pose.TestImage <png> [out.json]
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "PoseEstimation/PoseEstimator.h"
+#include "PoseEstimation/PoseRecording.h"
 #include "PoseEstimation/PoseTypes.h"
 #include "Tasks/Task.h"
 
@@ -26,6 +32,8 @@ class FPoseFrameGrabber;
 class FPoseInferenceThread;
 class FViewport;
 class UCPP_UW_PoseOverlay;
+class UCPP_UW_PoseDataPanel;
+class UCPP_UW_IHPCTimeline;
 struct FPoseCapturedFrame;
 
 UENUM(BlueprintType)
@@ -38,6 +46,7 @@ enum class EPoseEstimationStatus : uint8
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPoseEstimated, const FPoseFrameResult&, Result);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPoseRecordingSaved, const FString&, Folder);
 
 /** One analysed frame's timings, in milliseconds (for the averages in Pose.Stats). */
 struct FPoseStatSample
@@ -106,6 +115,45 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Sports2D")
 	EPoseVisibleSide VisibleSide = EPoseVisibleSide::Auto;
 
+	// ---------------- Sports2D post-processing of recordings (Config_demo.toml [post-processing]) ----------------
+
+	/** Fill gaps of up to InterpolateGapSmallerThan frames by straight lines (interpolate). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Sports2D post-processing")
+	bool bInterpolate = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Sports2D post-processing", meta=(ClampMin="1"))
+	int32 InterpolateGapSmallerThan = 100;
+
+	/** Data is kept from the first to the last run of at least this many valid frames (min_chunk_size); larger gaps
+	 *  inside are filled with the last value (fill_large_gaps_with = 'last_value'). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Sports2D post-processing", meta=(ClampMin="1"))
+	int32 MinChunkSize = 10;
+
+	/** Hampel filter: replace outliers by the median of a 7-frame window (reject_outliers). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Sports2D post-processing")
+	bool bRejectOutliers = true;
+
+	/** Zero-phase Butterworth low-pass filter (filter, filter_type = 'butterworth'). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Sports2D post-processing")
+	bool bFilter = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Sports2D post-processing", meta=(ClampMin="2"))
+	int32 ButterworthOrder = 4;
+
+	/** Hz. Lowered to just under half the frame rate when the frames come slower than twice this (Sports2D's live rule). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Sports2D post-processing", meta=(ClampMin="0.5"))
+	float ButterworthCutoffHz = 6.f;
+
+	// ---------------- Recording ----------------
+
+	/** Start / stop the pose recording with the timeline's Record button. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Recording")
+	bool bRecordWithTimeline = true;
+
+	/** Seconds of live history kept for the data panel's graphs. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Recording", meta=(ClampMin="1"))
+	float LiveHistorySeconds = 10.f;
+
 	// ---------------- Rate / overlay ----------------
 
 	/** Upper limit on analysed frames per second; 0 = as many as the CPU manages. */
@@ -129,6 +177,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Overlay")
 	int32 OverlayZOrder = 5;
 
+	/** The Pose Data panel (graphs, numbers, recording); the C++ class works on its own. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Data Panel")
+	TSubclassOf<UCPP_UW_PoseDataPanel> DataPanelWidgetClass;
+
+	/** Draw order: above the HUD (10), below the muscle popup (20). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Data Panel")
+	int32 DataPanelZOrder = 11;
+
 	// ---------------- Control ----------------
 
 	/** Start / stop analysing the view. The first start loads the models in the background. */
@@ -137,6 +193,13 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Pose Estimation")
 	bool IsEstimationEnabled() const { return bEnabled; }
+
+	/** Open / close the Pose Data panel. While it is open, estimation runs (the overlay only shows if enabled). */
+	UFUNCTION(BlueprintCallable, Category="Pose Estimation|Data Panel")
+	void SetDataPanelOpen(bool bOpen);
+
+	UFUNCTION(BlueprintPure, Category="Pose Estimation|Data Panel")
+	bool IsDataPanelOpen() const { return bDataPanelOpen; }
 
 	/** Show / hide the overlay (estimation keeps running for the data panel). */
 	UFUNCTION(BlueprintCallable, Category="Pose Estimation")
@@ -171,6 +234,45 @@ public:
 	UPROPERTY(BlueprintAssignable, Category="Pose Estimation")
 	FOnPoseEstimated OnPoseEstimated;
 
+	// ---------------- Recording ----------------
+
+	/** Start / stop recording. With bRecordWithTimeline this toggles the timeline's Record (so both stay in step). */
+	UFUNCTION(BlueprintCallable, Category="Pose Estimation|Recording")
+	void ToggleRecording();
+
+	/** Start / stop the pose recording itself (the timeline isn't touched). Stop processes and saves it. */
+	UFUNCTION(BlueprintCallable, Category="Pose Estimation|Recording")
+	void StartRecording();
+
+	UFUNCTION(BlueprintCallable, Category="Pose Estimation|Recording")
+	void StopRecording();
+
+	UFUNCTION(BlueprintPure, Category="Pose Estimation|Recording")
+	bool IsRecording() const { return bRecording; }
+
+	/** Seconds since the recording started (0 when not recording). */
+	UFUNCTION(BlueprintPure, Category="Pose Estimation|Recording")
+	float GetRecordingSeconds() const;
+
+	/** Folder of the last saved recording (empty if none yet). */
+	UFUNCTION(BlueprintPure, Category="Pose Estimation|Recording")
+	FString GetLastRecordingFolder() const { return LastRecordingFolder; }
+
+	/** Fires after a recording was processed and saved. */
+	UPROPERTY(BlueprintAssignable, Category="Pose Estimation|Recording")
+	FOnPoseRecordingSaved OnRecordingSaved;
+
+	/** The last saved recording (post-processed), or null. */
+	const FPoseProcessedRecording* GetLastRecording() const { return bHasLastRecording ? &LastRecording : nullptr; }
+
+	/** The last LiveHistorySeconds of analysed frames (raw angles, for live graphs). */
+	const FPoseRecording& GetLiveHistory() const { return LiveHistory; }
+
+	/** Running = analysing frames: enabled (overlay), the data panel is open, or a recording is in progress. */
+	bool IsRunning() const { return bEnabled || bDataPanelOpen || bRunForRecording; }
+
+	PoseSignal::FSettings GetPostProcessingSettings() const;
+
 	/** Absolute path of a model file setting. */
 	static FString ResolveModelPath(const FString& File);
 
@@ -192,6 +294,30 @@ private:
 	void EnsureOverlay();
 	void RefreshOverlay();
 	FViewport* GetGameViewport() const;
+
+	/** Starts / stops the pipeline when IsRunning() changed. */
+	void OnRunningChanged(bool bWasRunning);
+
+	/** Starts / stops the pose recording when the timeline's Record state changes. */
+	void FollowTimelineRecording();
+	UCPP_UW_IHPCTimeline* FindTimeline();
+
+	bool bRunForRecording = false;   // running because of a recording
+	bool bDataPanelOpen = false;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UCPP_UW_PoseDataPanel> DataPanelWidget = nullptr;
+	bool bRecording = false;
+	double RecordingStartTime = 0.0;
+	FString RecordingName;
+	FPoseRecording Recording;
+	FPoseRecording LiveHistory;
+	FPoseProcessedRecording LastRecording;
+	bool bHasLastRecording = false;
+	FString LastRecordingFolder;
+	TWeakObjectPtr<UCPP_UW_IHPCTimeline> Timeline;
+	double NextTimelineSearchTime = 0.0;
+	bool bTimelineWasRecording = false;
 
 	bool bEnabled = false;
 	bool bOverlayVisible = true;
@@ -221,6 +347,12 @@ private:
 	 *  -PoseQuitAfter=60"): switch on at Begin Play, log Pose.Stats every N s, quit after N s. Off unless given. */
 	float AutoLogStatsSeconds = 0.f;
 	float AutoQuitAfterSeconds = 0.f;
+	float AutoRecordAfterSeconds = 0.f;   // -PoseRecordAfter=5 -PoseRecordFor=30: press Record at 5 s, again 30 s later
+	float AutoRecordForSeconds = 0.f;
+	int32 AutoRecordStep = 0;
+	float AutoScreenshotEverySeconds = 0.f;   // -PoseScreenshotEvery=10: screenshot (with UI) into Saved/PoseEstimation/Screenshots
+	double NextAutoScreenshotTime = 0.0;
+	int32 AutoScreenshotCount = 0;
 	double AutoStartTime = 0.0;
 	double NextAutoLogTime = 0.0;
 

@@ -7,6 +7,11 @@
 // DetFrequency frames). A single image always runs the detector. Output: a JSON list, one entry per image, with the
 // detector boxes and each person's 26 keypoints + scores (FPoseEstimator::ToJson). Next to it, <file>.sports2d.json: the
 // people Sports2D's rules keep, the side they face and their angles (PoseSports2D::ResultToJson).
+// -RecordFps=10: also treat the images as a recording at that rate and write Sports2D's .mot / .trc / .csv files
+// (FPoseRecording) into <Out folder>/recording.
+//
+// Post-processing test:  -run=PoseEstimation -SignalCsv=<in.csv> -Out=<out.csv> -Fps=30 [-Angles]
+// runs every column of a CSV through Sports2D's post-processing (PoseSignal; -Angles also unwraps).
 
 #pragma once
 
