@@ -27,8 +27,8 @@ the files, settings, the tests against Sports2D, speed, and a dated work log.
 |---|---|---|
 | 1 | Models running in Unreal on the live view, checked against Sports2D | Done: keypoints identical to RTMLib (99.5 % exact, max 1.2 px) |
 | 2 | Sports2D-style overlay + the 26 angles | Done: angles identical to Sports2D's own functions; ~11 frames analysed per second |
-| 3 | Angles over time: filtering, data panel with graphs, export (CSV, `.trc`, `.mot`) | Built: post-processing identical to Sports2D / Pose2Sim's own functions (within 0.0001°); waiting for a test in Play |
-| 4 | The two round buttons (Pose Overlay, Pose Data) | Built: same look as the layer switcher, checked in the standalone game; waiting for a click test in Play |
+| 3 | Angles over time: filtering, data panel with graphs, export (CSV, `.trc`, `.mot`) | Done: post-processing identical to Sports2D / Pose2Sim's own functions (within 0.0001°); tested in Play |
+| 4 | The two round buttons (Pose Overlay, Pose Data) | Done: same look as the layer switcher; tested in Play |
 
 ## What this repository contains
 
