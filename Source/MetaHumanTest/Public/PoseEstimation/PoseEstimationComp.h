@@ -13,6 +13,9 @@
 // and a .csv in Saved/PoseEstimation/Recordings/<name>/ (FPoseRecording). Estimation is switched on for the recording
 // if it was off (without the overlay), so every recording has pose data.
 //
+// On screen (phase 4): two round buttons on the right (UCPP_UW_PoseButtons): Pose Overlay = SetEstimationEnabled,
+// Pose Data = SetDataPanelOpen. Everything a coach needs is reachable from them and the timeline's Record button.
+//
 // Console (also in the editor's Cmd box during Play):  Pose.Enable [0|1]   Pose.Overlay [0|1]   Pose.Stats
 //                                                      Pose.Data [0|1]   Pose.Dump   Pose.Record   Pose.TestImage <png> [out.json]
 
@@ -33,6 +36,7 @@ class FPoseInferenceThread;
 class FViewport;
 class UCPP_UW_PoseOverlay;
 class UCPP_UW_PoseDataPanel;
+class UCPP_UW_PoseButtons;
 class UCPP_UW_IHPCTimeline;
 struct FPoseCapturedFrame;
 
@@ -185,6 +189,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Data Panel")
 	int32 DataPanelZOrder = 11;
 
+	/** Show the two round buttons on the right of the screen (Pose Overlay, Pose Data) when Play starts. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Buttons")
+	bool bShowButtons = true;
+
+	/** The buttons; the C++ class works on its own, a Widget Blueprint child can change their look or place. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Buttons")
+	TSubclassOf<UCPP_UW_PoseButtons> ButtonsWidgetClass;
+
+	/** Draw order: above the HUD (10), below the muscle popup (20). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Pose Estimation|Buttons")
+	int32 ButtonsZOrder = 11;
+
 	// ---------------- Control ----------------
 
 	/** Start / stop analysing the view. The first start loads the models in the background. */
@@ -293,6 +309,8 @@ private:
 
 	void EnsureOverlay();
 	void RefreshOverlay();
+	/** Creates the two round buttons once the local player's viewport exists. */
+	void EnsureButtons();
 	FViewport* GetGameViewport() const;
 
 	/** Starts / stops the pipeline when IsRunning() changed. */
@@ -307,6 +325,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCPP_UW_PoseDataPanel> DataPanelWidget = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UCPP_UW_PoseButtons> ButtonsWidget = nullptr;
 	bool bRecording = false;
 	double RecordingStartTime = 0.0;
 	FString RecordingName;

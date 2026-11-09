@@ -4,6 +4,7 @@
 #include "PoseInferenceThread.h"
 #include "PoseEstimation/CPP_UW_PoseOverlay.h"
 #include "PoseEstimation/CPP_UW_PoseDataPanel.h"
+#include "PoseEstimation/CPP_UW_PoseButtons.h"
 #include "IHPC_UI/CPP_UW_IHPCTimeline.h"
 #include "UObject/UObjectIterator.h"
 #include "PoseEstimation/PoseSports2D.h"
@@ -193,6 +194,7 @@ UPoseEstimationComp::UPoseEstimationComp()
 	PrimaryComponentTick.TickGroup = TG_PostUpdateWork;   // after animation: the frame we ask for shows this tick's pose
 	OverlayWidgetClass = UCPP_UW_PoseOverlay::StaticClass();
 	DataPanelWidgetClass = UCPP_UW_PoseDataPanel::StaticClass();
+	ButtonsWidgetClass = UCPP_UW_PoseButtons::StaticClass();
 }
 
 FString UPoseEstimationComp::ResolveModelPath(const FString& File)
@@ -231,6 +233,7 @@ void UPoseEstimationComp::BeginPlay()
 	{
 		SetDataPanelOpen(true);
 	}
+	EnsureButtons();   // if the viewport isn't ready yet, TickComponent tries again
 }
 
 void UPoseEstimationComp::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -266,6 +269,11 @@ void UPoseEstimationComp::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		DataPanelWidget->RemoveFromParent();
 		DataPanelWidget = nullptr;
+	}
+	if (ButtonsWidget)
+	{
+		ButtonsWidget->RemoveFromParent();
+		ButtonsWidget = nullptr;
 	}
 	bDataPanelOpen = false;
 	Estimator.Reset();
@@ -551,6 +559,7 @@ void UPoseEstimationComp::TickComponent(float DeltaTime, ELevelTick TickType, FA
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	SmoothedFrameSeconds = SmoothedFrameSeconds > 0.f ? FMath::Lerp(SmoothedFrameSeconds, DeltaTime, 0.05f) : DeltaTime;
+	EnsureButtons();
 
 	// Hands-free test switches.
 	if (AutoLogStatsSeconds > 0.f && FPlatformTime::Seconds() >= NextAutoLogTime)
@@ -989,6 +998,30 @@ void UPoseEstimationComp::EnsureOverlay()
 		if (OverlayWidget)
 		{
 			OverlayWidget->AddToViewport(OverlayZOrder);
+		}
+	}
+}
+
+void UPoseEstimationComp::EnsureButtons()
+{
+	if (ButtonsWidget || !bShowButtons || !ButtonsWidgetClass)
+	{
+		return;
+	}
+	APlayerController* PC = Cast<APlayerController>(GetOwner());
+	if (!PC && GetWorld())
+	{
+		PC = GetWorld()->GetFirstPlayerController();
+	}
+	if (PC && PC->IsLocalController() && PC->GetLocalPlayer() && GetWorld() && GetWorld()->GetGameViewport())
+	{
+		ButtonsWidget = CreateWidget<UCPP_UW_PoseButtons>(PC, ButtonsWidgetClass);
+		if (ButtonsWidget)
+		{
+			ButtonsWidget->SetPoseComponent(this);
+			ButtonsWidget->AddToViewport(ButtonsZOrder);
+			// The full-screen canvas lets clicks through; only the pill and its buttons are clickable.
+			ButtonsWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		}
 	}
 }

@@ -2,7 +2,7 @@
 
 The goal: a **Sports2D-style pose estimation** that runs inside the project. It finds the person in the 3D view, draws their
 skeleton over the MetaHuman, and shows the joint-angle data in its own panel. Two round buttons on the right of the
-screen (styled like the layer switcher) will switch it on: **Pose Overlay** on top, **Pose Data** underneath.
+screen (styled like the layer switcher) switch it on: **Pose Overlay** on top, **Pose Data** underneath.
 
 [Sports2D](https://github.com/davidpagnon/Sports2D) is the outside tool the team used until now. This is a rebuild of
 it in C++: **the same two AI models, the same image preparation and the same rules**, so the numbers match what
@@ -15,7 +15,8 @@ it, so nothing is drawn on it.*
 
 Phase 3 adds the **Pose Data** panel (angle values and graphs) and **recording**: press the timeline's Record button
 and the angles and keypoints are smoothed the way Sports2D does it and saved in Sports2D's file formats plus a
-spreadsheet ([pictures](#10-the-pose-data-panel-cpp_uw_posedatapanel)).
+spreadsheet ([pictures](#10-the-pose-data-panel-cpp_uw_posedatapanel)). Phase 4 adds the two buttons, so no console is
+needed ([picture](#11-the-two-buttons-cpp_uw_posebuttons)).
 
 - [Status](#status)
 - [Try it](#try-it)
@@ -39,7 +40,7 @@ spreadsheet ([pictures](#10-the-pose-data-panel-cpp_uw_posedatapanel)).
 | 1 | Models running in Unreal on the live view + basic dot overlay, checked against Sports2D | **Done** (2026-11-08) |
 | 2 | Sports2D-style overlay: skeleton lines, confidence colours, angle arcs on the joints, list of angle values; the 26 angles | **Done** (2026-11-08): drawing and angles match Sports2D; steady ~11 frames analysed per second |
 | 3 | Angles over time: filtering (Butterworth 6 Hz), data panel with graphs, export (CSV + Sports2D's `.trc` / `.mot`) | **Built and tested** (2026-11-08): post-processing matches Sports2D / Pose2Sim; data panel and recording work in the standalone game. Waiting for a test in Play |
-| 4 | The two round buttons on the right (Pose Overlay, Pose Data) | To do |
+| 4 | The two round buttons on the right (Pose Overlay, Pose Data) | **Built and tested** (2026-11-08) in the standalone game: right place, right look, follow the state. Waiting for a click test in Play |
 
 Decisions so far:
 * **Image route.** The models look at the rendered picture, like Sports2D looks at a video. They do *not* read the
@@ -52,24 +53,32 @@ Decisions so far:
 
 ## Try it
 
-There are no buttons yet (phase 4 adds them). Until then, use the console:
+Everything is on screen; no console needed (this is what coaches and trainers use):
 
-1. Press **Play**, click in the game view and press **`** (the key left of 1) to open the console. The **Cmd** box at
-   the bottom of the Output Log also works.
-2. `Pose.Enable 1`. The models load in the background (about 1–2 s the first time), then the Sports2D overlay appears
-   on the MetaHuman.
-3. `Pose.Data` opens the **Pose Data** panel on the right: the angle values, a graph of the last 10 seconds and the
-   Record button ([step 10](#10-the-pose-data-panel-cpp_uw_posedatapanel)). It also starts the analysis if it
-   was off; the overlay only shows if `Pose.Enable` is on.
+1. Press **Play**. Two round buttons sit on the right edge of the screen, halfway down
+   ([step 11](#11-the-two-buttons-cpp_uw_posebuttons)).
+2. **Pose Overlay** (top, stick figure): shows the Sports2D skeleton, angle arcs and the list of angles on the
+   MetaHuman. The first time, the models load in the background (about 1–2 s), then the drawing appears. Click again to
+   hide it.
+3. **Pose Data** (below, graph): opens the **Pose Data** panel: the angle values, a graph of the last 10 seconds and the
+   Record button ([step 10](#10-the-pose-data-panel-cpp_uw_posedatapanel)). It works with the overlay on or off.
+   Click again (or the panel's **×**) to close it.
 4. To **record**, press the timeline's red **Record** button (or **Record** in the panel, which presses the timeline's
    button for you). Press it again to stop. The recording is processed like Sports2D does it, saved in
    `Saved/PoseEstimation/Recordings/Recording_<date>_<time>/`, and the panel switches to **Last recording** to show it.
+   **Open folder** in the panel shows the files.
+
+A button is **dark with a white icon when on**, light blue when off, like the layer buttons. Hovering shows what it does
+(and, the first time, that the models are loading).
+
+**Console** (for testing and debugging): during Play, click in the game view and press **`** (the key left of 1). The
+**Cmd** box at the bottom of the Output Log also works.
 
 | Command | Does |
 |---|---|
-| `Pose.Enable 1` / `0` (no number = toggle) | Start / stop analysing the view and the overlay |
+| `Pose.Enable 1` / `0` (no number = toggle) | Start / stop analysing the view and the overlay (= the **Pose Overlay** button) |
 | `Pose.Overlay 1` / `0` | Show / hide the drawing (the analysis keeps running) |
-| `Pose.Data 1` / `0` (no number = toggle) | Open / close the Pose Data panel |
+| `Pose.Data 1` / `0` (no number = toggle) | Open / close the Pose Data panel (= the **Pose Data** button) |
 | `Pose.Record` | Start / stop a recording, same as the timeline's Record button |
 | `Pose.Stats` | Writes one line to the Output Log, averaged over the last 3 s: frames analysed per second and the game's fps, image size, time in each model, where the rest of the time goes (copying the frame, waiting, analysing), copy timeouts, people found, and for the main person: valid keypoints, mean score, the side facing the camera, number of angles |
 | `Pose.Dump` | Saves the next analysed frame in `Saved/PoseEstimation/`: the image (PNG), the keypoints (JSON), the people kept + angles (`.sports2d.json`) and a screenshot with the overlay (`_screen.png`). The first screenshot can freeze the game for a few seconds (Unreal compiles a few shaders for it) |
@@ -302,6 +311,34 @@ Clicks outside the panel go through to the scene as before. From top to bottom:
 
 Opening the panel starts the analysis (closing it stops it again, unless the overlay is on or a recording is running).
 
+### 11. The two buttons: `CPP_UW_PoseButtons`
+
+![The two pose buttons on the right edge, with the Pose Data panel open](images/pose_06_buttons.png)
+*Standalone game, Pose Data open (its button is dark) and the overlay off (its button is light). Compare with the
+layer switcher at the bottom right: same circles, same pill.*
+
+Two round buttons in a see-through pill on the right edge of the screen, vertically centred: **Pose Overlay** on top,
+**Pose Data** underneath. They copy the layer switcher (Body / Muscles / Skeleton) exactly:
+* **Pictures:** the same glossy 46 px circles, cut from the same Figma pictures with their icons removed, with new icons
+  drawn in the same line width and colours: a stick figure with joint dots (overlay) and a line graph (data). On = dark
+  circle with a white icon, off = light-blue circle with a navy icon, like a selected / unselected layer button. Made by
+  `Tools/PoseEstimation/make_pose_button_textures.py`; putting the Body icon back on the empty circles gives Figma's
+  picture to within 1 grey level on average, so the circles are the real ones.
+* **Pill:** `#1D3C55` at 26 %, fully rounded, 65 px wide (the layer switcher's pill, standing up); buttons 58.88 px
+  apart, as on the layer switcher. Clicks between the buttons don't reach the 3D view; everywhere else on the screen
+  they pass through as before.
+* **Hover / press:** brighter (×1.15) / darker (×0.8), as on the layer and timeline buttons. Clicking doesn't take
+  keyboard focus, so the camera keys and the console key keep working.
+* **What they do:** **Pose Overlay** = `SetEstimationEnabled` (analysis + drawing), **Pose Data** = `SetDataPanelOpen`.
+  Each button reads the component's state every frame, so it stays right however the state changes (the panel's ×,
+  the console, Blueprint).
+* **Tooltips** say what each button does, *"Loading the pose models…"* while they load, and why it can't start if the
+  model files are missing.
+
+The pose component creates the buttons when Play starts (*Show Buttons* setting), at Z-order 11: above the HUD (10),
+below the muscle popup (20). They are drawn in C++, so they need no Widget Blueprint. The data panel stops 96 px
+from the right edge, so the buttons stay visible next to it.
+
 ---
 
 ## The files
@@ -320,6 +357,7 @@ All new code is in `Source/MetaHumanTest/Public/PoseEstimation/` (headers) and `
 | `PoseRecording.h/.cpp` | A recording: the samples, the even time grid, and writing the `.mot`, `.trc` and `.csv` files ([step 8](#8-recording-poserecording)). |
 | `PoseSignal.h/.cpp` | Sports2D's post-processing ([step 9](#9-sports2ds-post-processing-posesignal)): unwrapping, gap filling, Hampel filter, and the Butterworth filter (including scipy's `butter` and `filtfilt`, rewritten in C++). Plain functions, no Unreal objects. |
 | `CPP_UW_PoseDataPanel.h/.cpp` | The Pose Data panel ([step 10](#10-the-pose-data-panel-cpp_uw_posedatapanel)): the panel, the graph (`UCPP_UW_PoseAngleGraph`) and the clickable angle rows (`UCPP_UW_PoseAngleRow`). |
+| `CPP_UW_PoseButtons.h/.cpp` | The two round buttons on the right ([step 11](#11-the-two-buttons-cpp_uw_posebuttons)). |
 | `PoseEstimationCommandlet.h/.cpp` | Command-line tests, without opening the editor: runs the models on image files and writes the keypoints plus the people kept and their angles (`-Images=`), optionally as a recording with its Sports2D files (`-RecordFps=`); and runs columns of a CSV through the post-processing (`-SignalCsv=`). Used to compare with Sports2D ([below](#how-we-know-it-matches-sports2d)). |
 
 Other new files:
@@ -330,6 +368,8 @@ Other new files:
 | `Tools/PoseEstimation/parity_check.py` | Runs real RTMLib on the same images and compares its output with Unreal's. |
 | `Tools/PoseEstimation/sports2d_reference.py` | Runs Sports2D's own drawing and angle functions on Unreal's keypoints (phase 2 checks). |
 | `Tools/PoseEstimation/postprocessing_check.py` | Runs Sports2D's / Pose2Sim's own post-processing functions on the same data as Unreal and compares (phase 3 checks). |
+| `Tools/PoseEstimation/make_pose_button_textures.py` | Makes the button pictures `SourceArt/Figma/UE/T_IHPC_PB_*.png` from the layer switcher's Figma pictures (uses `Tools/FigmaUI/make_ui_textures.py` and `SourceArt/Figma/Original/`): `python -I Tools/PoseEstimation/make_pose_button_textures.py` |
+| `Tools/PoseEstimation/ue_import_pose_textures.py` | Imports only those four pictures into `/Game/UserInterface/IHPC/Textures/` with the HUD's texture settings (the other textures aren't touched). Run with the editor closed (command in the file) or from the editor: *Tools > Execute Python Script* |
 
 ---
 
@@ -352,6 +392,8 @@ Select **PoseEstimation** in `BP_PlayerController`'s Components panel:
 | Data Panel Widget Class / Data Panel Z Order | `CPP_UW_PoseDataPanel` / 11 | The data panel; 11 = above the HUD (10), below the muscle popup (20) |
 | Record With Timeline | on | Recordings start and stop with the timeline's Record button; the panel's Record presses it |
 | Live History Seconds | 10 | How much the panel's live graph shows |
+| Show Buttons | on | Show the two round buttons when Play starts |
+| Buttons Widget Class / Buttons Z Order | `CPP_UW_PoseButtons` / 11 | The buttons; 11 = above the HUD (10), below the muscle popup (20) |
 | **Sports2D post-processing** (recordings only) | | |
 | Interpolate / Interpolate Gap Smaller Than | on / 100 | Fill gaps up to this many frames with straight lines |
 | Min Chunk Size | 10 | Keep data from the first to the last run of at least this many valid frames; fill longer gaps with the last value |
@@ -380,6 +422,16 @@ Class*):
 | Default Angles | right knee, left knee, trunk | Angles on the graph when the panel opens (Sports2D's names) |
 | Line Colors | green, blue, orange, pink | Graph colours in order of selection; their number = how many angles at once |
 | Refresh Interval | 0.1 s | How often the numbers and the live graph are updated |
+
+The buttons' settings are on `CPP_UW_PoseButtons` (same way: a Widget Blueprint child, set as *Buttons Widget Class*):
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Overlay / Data On / Off Texture | `T_IHPC_PB_*` | The four pictures. If one is missing, a plain circle in the same colour is drawn and the Output Log says so |
+| Button Size / Button Spacing | 46.66 / 58.88 | Size of a button and distance between their centres (the layer switcher's) |
+| Pill Thickness / Pill Color | 65 / `#1D3C55` at 26 % | The pill behind the buttons |
+| Right Margin / Vertical Offset | 16 / 0 | Distance from the right edge; move up (negative) or down from the middle of the screen |
+| Hovered Tint / Pressed Tint | 1.15 / 0.8 | Brightness on hover / press |
 
 ---
 
@@ -517,6 +569,14 @@ Phase 3:
 * **Recording without the editor's timeline.** Recordings follow the timeline's Record button. If the HUD has no timeline
   (another level), the panel's Record and `Pose.Record` record on their own.
 
+Phase 4 / building:
+* **"Unable to build while Live Coding is active"** with this project's editor closed: another Unreal editor (another
+  copy of the project) is open with Live Coding on. The check looks at the shared `UnrealEditor.exe`, not the project,
+  so it is a false alarm when the other editor is a different project folder. Add `-NoHotReloadFromIDE` to the
+  `Build.bat` command, or close the other editor.
+* **Starting the standalone game from Git Bash:** Git Bash turns `/Game/Main` into a Windows path and the game can't
+  find the level. Put `MSYS_NO_PATHCONV=1` in front of the command, or use PowerShell / cmd.
+
 ---
 
 ## Changes outside the new folder
@@ -529,11 +589,14 @@ Phase 3:
 | `Config/DefaultEngine.ini` | `[/Script/NNERuntimeORT.NNERuntimeORTSettings]`: 4 CPU threads for the models in packaged builds. `GameDefaultMap=/Game/Main.Main` (was a duplicated `EditorStartupMap` line), so the standalone game opens `Main` |
 | `Source/MetaHumanTest.Target.cs` | `BuildSettingsVersion.V5` → `V7`, so the standalone game builds again (needed to give the app to coaches) |
 | `README/README.md` | Link to this page; the new folders in "Where everything lives" |
+| `Config/DefaultGame.ini` (phase 4) | `+DirectoriesToAlwaysCook=(Path="/Game/UserInterface/IHPC/Textures")`: the button pictures are loaded from C++ by name, so nothing else tells the packager to include them |
+| `Content/UserInterface/IHPC/Textures/T_IHPC_PB_*` (phase 4, new) | The four button pictures, imported with the same UI settings as the other HUD textures; their PNGs are in `SourceArt/Figma/UE/` |
 
 **Perforce:** these files were edited without being checked out first (they were made writable). Check them out or use
 *Reconcile Offline Work* in P4V, and add the new files (`PoseEstimation/` source, `PoseModels/`,
 `Tools/PoseEstimation/`, this page and its images). Phase 3 changed no shared files: everything is in the
-`PoseEstimation/` folders, `Tools/PoseEstimation/` and this page.
+`PoseEstimation/` folders, `Tools/PoseEstimation/` and this page. Phase 4 adds the button pictures (PNG + Unreal
+assets) and the `DefaultGame.ini` line.
 
 ---
 
@@ -557,6 +620,7 @@ Phase 3:
 | 2026-11-08 | Phase 3 started. Read Sports2D's post-processing (`process.py`) and Pose2Sim's functions it calls. Ported them (`PoseSignal`), including scipy's Butterworth design and `filtfilt`. Synthetic test signals at 30 and 11.3 frames/s, as coordinates and as angles: same as Pose2Sim's own functions to within 0.000001. |
 | 2026-11-08 | Recording (`PoseRecording`) with Sports2D's `.mot` / `.trc` files plus a CSV, following the timeline's Record button; the Pose Data panel (`CPP_UW_PoseDataPanel`) with live and recorded graphs; `Pose.Data`, `Pose.Record`; hands-free switches for the panel, recording and screenshots. The 40 demo frames as a recording: 956 values match Sports2D's chain. |
 | 2026-11-08 | Hands-free test in the standalone game with a 30 s recording. Two fixes: (1) putting live frames on the even grid by straight lines lost most knee values next to gaps; now each step takes the nearest frame. (2) One shank angle came out 360° off from Sports2D because it was unwrapped before being put on the grid; now the grid comes first. Also: the panel's caption showed 6 Hz while 5 Hz was used. After the fixes, the live recording's 7,170 values match Sports2D's chain (largest difference 0.00007°). **Phase 3 built**; waiting for a test in Play. |
+| 2026-11-08 | Phase 4: the two round buttons. Pictures made from the layer switcher's own Figma circles with new icons (stick figure, line graph) and imported; `CPP_UW_PoseButtons` (pill, hover / press, tooltips, follows the component's state), created by the pose component; `DefaultGame.ini` always cooks the HUD textures folder so packaged builds have the pictures. Built (no errors, no warnings). Standalone game with only the panel open: both buttons on the right edge, Pose Data dark (on), Pose Overlay light (off), same look as the layer switcher. Waiting for a click test in Play. |
 
 ---
 

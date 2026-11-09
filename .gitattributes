@@ -9,3 +9,7 @@
 *.md        text
 *.txt       text
 *.uproject  text
+
+# Unreal assets and pictures are binary.
+*.uasset    binary
+*.png       binary

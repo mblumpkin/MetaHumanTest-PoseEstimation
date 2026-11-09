@@ -38,3 +38,22 @@
 !/README/images/pose_*.png
 
 __pycache__/
+
+# Phase 4: the pose buttons' pictures (made by Tools/PoseEstimation/make_pose_button_textures.py) and their Unreal assets
+!/SourceArt/
+/SourceArt/*
+!/SourceArt/Figma/
+/SourceArt/Figma/*
+!/SourceArt/Figma/UE/
+/SourceArt/Figma/UE/*
+!/SourceArt/Figma/UE/T_IHPC_PB_*.png
+
+!/Content/
+/Content/*
+!/Content/UserInterface/
+/Content/UserInterface/*
+!/Content/UserInterface/IHPC/
+/Content/UserInterface/IHPC/*
+!/Content/UserInterface/IHPC/Textures/
+/Content/UserInterface/IHPC/Textures/*
+!/Content/UserInterface/IHPC/Textures/T_IHPC_PB_*.uasset
